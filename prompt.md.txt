@@ -1,30 +1,28 @@
-Task1:
-## Background:
+###Task1
+#Background:
 For the Green Vehicle Routing Problem with Time Windows and Capacity Constraints (GCVRPTW), it is necessary to model three real-world scenario dimensions of customer satisfaction, driver load fairness, and congestion adaptability through fuzzy propositions, softening hard constraints into fuzzy logic relationships to enhance the model's adaptability to complex scenarios.
 
-## Modeling Methods:
+#Modeling Methods:
 Basic methods include variable standardization, linguistic term definition (high, medium, low), and proposition structures (conditional, assertive). The modeling process involves capturing the relationships between propositions based on the three scenarios of the above fuzzy propositions, defining proposition structures, and combining propositions to form a fuzzy proposition set and membership functions.
 
-## Output:
+#Output(In English): (3-5 Fuzzy proposition)  
 Fuzzy proposition set and its logical expressions.
 
 
-## Background and Objectives:
+Task2:
+#Background and Objectives:
 For the Green Vehicle Routing Problem with Time Windows and Capacity Constraints (GCVRPTW), it is necessary to construct a fuzzy proposition set Fs from three core dimensions of customer satisfaction, driver load fairness, and congestion adaptability, softening hard constraints (such as time windows, load balancing, congestion avoidance) into fuzzy logic relationships to enhance the model's dynamic adaptability to real-world scenarios.
+#Modeling Methods:
+Variable standardization: Linearly map variables to the [0,1] range.
+Linguistic term definition: Fuzzy terms such as High, Medium, Low.
+Proposition structures: Conditional form: If...is...then...is... and assertive form: ...is....
+#Output Requirements: (consider 3-5 Fuzzy propositions)
+Logical proposition set F_s = {p1:..., p2:.., p3:...} (3-5 Fuzzy proposition)  
+Membership function definitions and descriptions
+#Workflows: F_s -> Fuzzy constraints -> Integrated Fuzzy propositions（t-norm and t-conorm you can use
+）-> currently context truth values alpha -> compare with turth alpha threshold = 0.6 -> add alpha*1e+5 to constraint viotate
 
-## Modeling Methods:
-- Variable standardization: Linearly map variables to the [0,1] range.
-- Linguistic term definition: Fuzzy terms such as High, Medium, Low.
-- Proposition structures: Conditional form: If...is...then...is... and assertive form: ...is....
-
-## Output Requirements: (consider 3 propositions)
-# Logical proposition set F_s = {p1:..., p2:.., p3:...}
-# Membership function definitions and descriptions
-
-
-## Complete CalObj2 Function with Fuzzy Propositions
-
-```matlab
+#Original CalObj2:
 function [PopObj, PopCon, routesList] = CalObj2(obj, PopDec)
     % Input Parameters:
     %   obj - Problem object containing distance matrix, demands, time windows, etc.
@@ -215,47 +213,6 @@ function [PopObj, PopCon, routesList] = CalObj2(obj, PopDec)
         PopObj(i, :) = [economicCost, envSocialCost];
     end
 end
-```
 
-## Fuzzy Proposition Set and Logical Expressions
-
-### Logical Proposition Set
-```
-F_s = {p1, p2, p3}
-```
-
-### Proposition p1: Congestion Adaptability
-- **Proposition Structure**: If service time is in peak period, then congestion degree is High
-- **Logical Expression**: ∀r∈routes, ∀k∈route: service_hour ∈ peak_window ⇒ congestion_deg is High
-- **Membership Function**: Gaussian function
-  ```
-  μ_high(congestion_deg) = exp(-(distance^2)/(2*peak_std^2))
-  where distance = |service_hour - peak_mid|
-  ```
-
-### Proposition p2: Load Fairness
-- **Proposition Structure**: If load difference is small, then fairness is High
-- **Logical Expression**: load_diff is Small ⇒ fairness is High
-- **Membership Function**: Bell-shaped function
-  ```
-  μ_high(fairness) = 1 / (1 + (load_diff / α)^(2β))
-  where α = 0.2*Q, β = 2
-  ```
-
-### Proposition p3: Time Window Satisfaction
-- **Proposition Structure**: If arrival time is within time window, then satisfaction is High
-- **Logical Expression**: arrival_time ∈ [ready, due] ⇒ satisfaction is High
-- **Membership Function**: S-shaped function
-  ```
-  μ_high(satisfaction) = 
-  {
-    1,  if arrival_time + service ≤ ready
-    1/(1+exp(k*(lateness-window_len/2))),  if ready < arrival_time + service ≤ due
-    1/(1+exp(-k*(tardiness-window_len/2))),  if arrival_time > due
-  }
-  where k = 5/(t1-t0)
-  ```
-
-### Aggregation of Fuzzy Propositions
-- **Aggregation Operator**: Algebraic product (t-norm)
-- **Combined Truth Value**: τ(p1, p2, p3) = μ(p1) × μ(p2) × μ(p3)
+#Output (In English): Complete 'CalObj2' Function with Fuzzy Propositions(Matlab code and you can't change output and input of 'CalObj2' )
+#PS: all answer in english
