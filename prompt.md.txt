@@ -1,0 +1,261 @@
+Task1:
+## Background:
+For the Green Vehicle Routing Problem with Time Windows and Capacity Constraints (GCVRPTW), it is necessary to model three real-world scenario dimensions of customer satisfaction, driver load fairness, and congestion adaptability through fuzzy propositions, softening hard constraints into fuzzy logic relationships to enhance the model's adaptability to complex scenarios.
+
+## Modeling Methods:
+Basic methods include variable standardization, linguistic term definition (high, medium, low), and proposition structures (conditional, assertive). The modeling process involves capturing the relationships between propositions based on the three scenarios of the above fuzzy propositions, defining proposition structures, and combining propositions to form a fuzzy proposition set and membership functions.
+
+## Output:
+Fuzzy proposition set and its logical expressions.
+
+
+## Background and Objectives:
+For the Green Vehicle Routing Problem with Time Windows and Capacity Constraints (GCVRPTW), it is necessary to construct a fuzzy proposition set Fs from three core dimensions of customer satisfaction, driver load fairness, and congestion adaptability, softening hard constraints (such as time windows, load balancing, congestion avoidance) into fuzzy logic relationships to enhance the model's dynamic adaptability to real-world scenarios.
+
+## Modeling Methods:
+- Variable standardization: Linearly map variables to the [0,1] range.
+- Linguistic term definition: Fuzzy terms such as High, Medium, Low.
+- Proposition structures: Conditional form: If...is...then...is... and assertive form: ...is....
+
+## Output Requirements: (consider 3 propositions)
+# Logical proposition set F_s = {p1:..., p2:.., p3:...}
+# Membership function definitions and descriptions
+
+
+## Complete CalObj2 Function with Fuzzy Propositions
+
+```matlab
+function [PopObj, PopCon, routesList] = CalObj2(obj, PopDec)
+    % Input Parameters:
+    %   obj - Problem object containing distance matrix, demands, time windows, etc.
+    %   PopDec - Population decision matrix (each row represents a chromosome encoding)
+    % Output Parameters:
+    %   PopObj - Bicriteria objective matrix [economic cost, environmental-social cost]
+    %   PopCon - Constraint violation value
+    %   routesList - List of routes (cell array)
+    
+    % Basic parameter definitions
+    N = size(PopDec, 1);                  % Population size
+    PopObj = zeros(N, 2);                % Bicriteria objective storage
+    PopCon = zeros(N, 1);                % Constraint violation storage
+    routesList = cell(N, 1);             % Route list storage
+    
+    depotIdxs = obj.depotIdxs;            % Depot node indices
+    maxRoutes = obj.car;                  % Maximum number of routes (vehicles)
+    Q = obj.capacity;                     % Vehicle capacity
+    
+    % Cost parameters
+    FC = 59.90;       % Vehicle fixed cost (£/day)
+    DW = 0.0022;      % Driver cost (£/s)
+    Cf = 1.4;         % Fuel price (£/l)
+    kpl = 0.052;      % Fuel consumption rate (km/l)
+    Ce = 0.02;        % Carbon emission cost (€/kg)
+    gamma = 0.75;     % Carbon emission factor (kg CO₂/l)
+    a = 0.0005;       % Accident risk coefficient (€/kg·km)
+    
+    % Hard constraint penalty factors
+    capacityPenaltyFactor = 1000;         % Capacity constraint penalty factor
+    timeWindowPenaltyFactor = 1000;       % Time window constraint penalty factor
+    
+    % Main loop: Iterate through each solution
+    for i = 1:N
+        % 1. Parse route encoding
+        chrom = PopDec(i, PopDec(i, :) ~= -1);
+        
+        % Ensure the first node is a depot
+        if ~ismember(chrom(1), depotIdxs)
+            % Find the first depot and swap
+            firstDepotIdx = find(ismember(chrom, depotIdxs), 1);
+            chrom = [chrom(firstDepotIdx), chrom(1:firstDepotIdx-1), chrom(firstDepotIdx+1:end)];
+        end
+        
+        % Split the chromosome into routes (consecutive depots indicate empty routes)
+        routeBreaks = find(ismember(chrom, depotIdxs));
+        % Add end index to handle the last route
+        routeBreaks = [routeBreaks, length(chrom)+1];
+        
+        routes = {};
+        currentDepotIdx = 1; % Track current depot index
+        
+        for r = 1:length(routeBreaks)-1
+            startIdx = routeBreaks(r);
+            endIdx = routeBreaks(r+1) - 1;
+            
+            % Determine the depot for this route
+            currentDepot = chrom(startIdx);
+            
+            % Handle consecutive depots
+            if endIdx < startIdx
+                % Empty route (current depot serves no customers)
+                routes{end+1} = [];
+                currentDepotIdx = currentDepotIdx + 1;
+                continue;
+            end
+            
+            % Extract customer nodes (exclude depots)
+            routeCustomers = chrom(startIdx+1:endIdx);
+            routeCustomers = routeCustomers(~ismember(routeCustomers, depotIdxs));
+            
+            % Add to route list
+            routes{end+1} = routeCustomers;
+            currentDepotIdx = currentDepotIdx + 1;
+        end
+        
+        % Ensure at least one route exists
+        if isempty(routes)
+            routes{1} = []; % Create an empty route
+        end
+        
+        routesList{i} = routes;
+        
+        % 2. Calculate basic costs and loads
+        economicCost = 0;             % Economic cost
+        envSocialCost = 0;           % Environmental-social cost
+        routeDurations = zeros(1, length(routes)); % Durations of each route
+        routeLoads = zeros(1, length(routes));      % Loads of each route
+        capacityViolation = 0;        % Capacity constraint violation
+        timeWindowViolation = 0;      % Time window constraint violation
+        
+        for r = 1:length(routes)
+            route = [0, routes{r}, 0];  % Add depot nodes (0 represents depot)
+            currLoad = 0;
+            routeDist = 0;
+            fuelConsump = 0;
+            emission = 0;
+            accidentRisk = 0;
+            routeTime = 0;
+            arrivalTime = 0;          % Arrival time
+            
+            % Skip calculation for empty routes
+            if isempty(routes{r})
+                continue;
+            end
+            
+            for k = 1:length(route)-1
+                from = route(k);
+                to = route(k+1);
+                dist = obj.C(from+1, to+1);  % Distance matrix (+1 to convert to 1-based index)
+                routeDist = routeDist + dist;
+                
+                % Traffic congestion handling
+                if to > 0
+                    service_minute = obj.serviceTime(to+1);
+                    service_hour = floor(service_minute / 60) + (service_minute / 60 - floor(service_minute / 60));
+                    
+                    % Gaussian congestion membership function
+                    congestion_deg = 0;
+                    congestion_windows = [7, 9; 17, 19]; % Peak hours [start, end]
+                    for p = 1:size(congestion_windows, 1)
+                        peak_mid = mean(congestion_windows(p, :));
+                        peak_std = diff(congestion_windows(p, :)) / 4;
+                        distance = abs(service_hour - peak_mid);
+                        congestion_deg = max(congestion_deg, exp(-(distance^2)/(2*peak_std^2)));
+                    end
+                    travelTime = dist / 60 * (1 + congestion_deg * 0.5); % Congestion impact factor
+                else
+                    travelTime = dist / 60; % Return to depot without congestion consideration
+                end
+                
+                % Update arrival time
+                arrivalTime = arrivalTime + travelTime;
+                
+                % Fuel and emission calculation
+                lph = dist / kpl;
+                fuelConsump = fuelConsump + lph * travelTime;
+                emission = emission + Ce * fuelConsump * gamma;
+                
+                % Accident risk calculation
+                if to > 0
+                    accidentRisk = accidentRisk + a * dist * currLoad;
+                    currLoad = currLoad + obj.demand(to+1);
+                    routeLoads(r) = currLoad;
+                    
+                    % Check capacity constraint
+                    if currLoad > Q
+                        capacityViolation = capacityViolation + (currLoad - Q);
+                    end
+                    
+                    % Check time window constraint
+                    idx = to + 1;
+                    ready = obj.readyTime(idx);      % Ready time
+                    due = obj.dueTime(idx);        % Due time
+                    
+                    % Calculate time window violation
+                    if arrivalTime < ready
+                        % Early arrival, wait until ready time (no violation)
+                        waitTime = ready - arrivalTime;
+                        arrivalTime = ready;
+                    elseif arrivalTime > due
+                        % Late arrival, violation occurs
+                        lateTime = arrivalTime - due;
+                        timeWindowViolation = timeWindowViolation + lateTime;
+                    end
+                    
+                    % Update time after service
+                    arrivalTime = arrivalTime + obj.serviceTime(idx);
+                end
+            end
+            
+            % Accumulate economic cost (only for non-empty routes)
+            vehicleCost = FC / 8;         % Daily cost allocation
+            driverCost = DW * routeTime * 3600;  % Driver cost (convert hours to seconds)
+            fuelCost = Cf * fuelConsump;         % Fuel cost
+            economicCost = economicCost + vehicleCost + driverCost + fuelCost;
+            
+            % Accumulate environmental-social cost
+            envSocialCost = envSocialCost + emission + accidentRisk;
+            routeDurations(r) = routeTime;
+        end
+        
+        % 3. Calculate constraint violation value
+        PopCon(i) = capacityPenaltyFactor * capacityViolation + ...
+                    timeWindowPenaltyFactor * timeWindowViolation;
+        
+        % 4. Assign bicriteria objectives
+        PopObj(i, :) = [economicCost, envSocialCost];
+    end
+end
+```
+
+## Fuzzy Proposition Set and Logical Expressions
+
+### Logical Proposition Set
+```
+F_s = {p1, p2, p3}
+```
+
+### Proposition p1: Congestion Adaptability
+- **Proposition Structure**: If service time is in peak period, then congestion degree is High
+- **Logical Expression**: ∀r∈routes, ∀k∈route: service_hour ∈ peak_window ⇒ congestion_deg is High
+- **Membership Function**: Gaussian function
+  ```
+  μ_high(congestion_deg) = exp(-(distance^2)/(2*peak_std^2))
+  where distance = |service_hour - peak_mid|
+  ```
+
+### Proposition p2: Load Fairness
+- **Proposition Structure**: If load difference is small, then fairness is High
+- **Logical Expression**: load_diff is Small ⇒ fairness is High
+- **Membership Function**: Bell-shaped function
+  ```
+  μ_high(fairness) = 1 / (1 + (load_diff / α)^(2β))
+  where α = 0.2*Q, β = 2
+  ```
+
+### Proposition p3: Time Window Satisfaction
+- **Proposition Structure**: If arrival time is within time window, then satisfaction is High
+- **Logical Expression**: arrival_time ∈ [ready, due] ⇒ satisfaction is High
+- **Membership Function**: S-shaped function
+  ```
+  μ_high(satisfaction) = 
+  {
+    1,  if arrival_time + service ≤ ready
+    1/(1+exp(k*(lateness-window_len/2))),  if ready < arrival_time + service ≤ due
+    1/(1+exp(-k*(tardiness-window_len/2))),  if arrival_time > due
+  }
+  where k = 5/(t1-t0)
+  ```
+
+### Aggregation of Fuzzy Propositions
+- **Aggregation Operator**: Algebraic product (t-norm)
+- **Combined Truth Value**: τ(p1, p2, p3) = μ(p1) × μ(p2) × μ(p3)
