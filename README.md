@@ -1,7 +1,7 @@
 # Modeling-Context-as-Fuzzy-constriants
 Modeling Contexts in Trade-off Total Cost and Customer Satisfaction VRP via Large Language Models
 
-The best results of generation of 4 LLMs is as follows,
+The best generation results of 4 LLMs are as follows,
 
 `Doubao`: https://www.doubao.com/thread/w387cec388b67760f
 
