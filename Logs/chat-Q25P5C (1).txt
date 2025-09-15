@@ -1,0 +1,213 @@
+### USER
+
+
+### ASSISTANT
+### 1. Logical Proposition Set \( \mathcal{F}_s \)
+\[
+\mathcal{F}_s = \left\{
+\begin{array}{l}
+p_1: \text{implies}\left( \text{or}\left( D_{\text{loadDiff}} \text{ is Low}, D_{\text{routeLenDiff}} \text{ is Low} \right), F \text{ is High} \right), \\
+p_2: \text{and}\left( O_{\text{driver}} \text{ is Low}, N_{\text{driver}} \text{ is Medium or Low} \right), \\
+p_3: \text{implies}\left( S_{\text{custAvg}} \text{ is High}, Q_{\text{service}} \text{ is High} \right), \\
+p_4: U_{\text{capacity}} \text{ is Medium(0.3-0.7)} 
+\end{array}
+\right\}
+\]
+
+---
+
+### 2. Universe of Discourse for Variables
+| **Variable**         | **Universe of Discourse** (Normalized to \([0,1]\)) |
+|----------------------|---------------------------------------------------|
+| \( D_{\text{loadDiff}} \) | \([0, 1]\) (Normalized by vehicle capacity \( Q \)) |
+| \( D_{\text{routeLenDiff}} \) | \([0, 1]\) (Normalized by route length) |
+| \( F \) (Fairness)    | \([0, 1]\) (Derived from \( D_{\text{loadDiff}} \) and \( D_{\text{routeLenDiff}} \)) |
+| \( O_{\text{driver}} \) | \([0, 1]\) (Normalized by maximum working hours) |
+| \( N_{\text{driver}} \) | \([0, 1]\) (Normalized by maximum vehicle count \( \text{maxVehicles} \)) |
+| \( S_{\text{custAvg}} \) | \([0, 1]\) (Normalized satisfaction score) |
+| \( Q_{\text{service}} \) | \([0, 1]\) (Normalized service quality) |
+| \( U_{\text{capacity}} \) | \([0, 1]\) (Capacity utilization) |
+
+---
+
+### 3. Membership Function Definitions
+#### **Proposition \( p_1 \)**:
+- **\( D_{\text{loadDiff}} \text{ is Low} \)**:  
+  Triangular membership with peak at \( 0 \), decreasing to \( 0 \) at \( 0.5 \).  
+  \[
+  \mu_{\text{Low}}(x) = 
+  \begin{cases}
+  1 - \frac{x}{0.25}, & 0 \leq x \leq 0.25 \\
+  \frac{0.5 - x}{0.25}, & 0.25 < x \leq 0.5 \\
+  0, & \text{otherwise}
+  \end{cases}
+  \]
+
+- **\( D_{\text{routeLenDiff}} \text{ is Low} \)**:  
+  Same as \( D_{\text{loadDiff}} \text{ is Low} \).
+
+- **\( F \text{ is High} \)**:  
+  Triangular membership with peak at \( 1 \), decreasing to \( 0 \) at \( 0.75 \).  
+  \[
+  \mu_{\text{High}}(x) = 
+  \begin{cases}
+  \frac{x - 0.75}{0.25}, & 0.75 \leq x \leq 1 \\
+  1 - \frac{(x - 0.5)}{0.25}, & 0.5 \leq x < 0.75 \\
+  0, & \text{otherwise}
+  \end{cases}
+  \]
+
+#### **Proposition \( p_2 \)**:
+- **\( O_{\text{driver}} \text{ is Low} \)**:  
+  Triangular membership (same as \( \mu_{\text{Low}} \)).  
+
+- **\( N_{\text{driver}} \text{ is Medium} \)**:  
+  Trapezoidal membership between \( 0.3 \) and \( 0.7 \).  
+  \[
+  \mu_{\text{Medium}}(x) = 
+  \begin{cases}
+  \frac{x}{0.3}, & 0 \leq x \leq 0.3 \\
+  1, & 0.3 \leq x \leq 0.7 \\
+  \frac{1 - (x - 0.7)/0.3}, & 0.7 < x \leq 1 \\
+  0, & \text{otherwise}
+  \end{cases}
+  \]
+
+#### **Proposition \( p_3 \)**:
+- **\( S_{\text{custAvg}} \text{ is High} \)** and **\( Q_{\text{service}} \text{ is High} \)**:  
+  Use \( \mu_{\text{High}} \) as defined above.
+
+#### **Proposition \( p_4 \)**:
+- **\( U_{\text{capacity}} \text{ is Medium} \)**:  
+  Use \( \mu_{\text{Medium}} \).
+
+---
+
+### 4. Modified `CalObj2` Function with Fuzzy Constraints
+
+```matlab
+function [PopObj, PopCon, routesList, C1, C2, C3, C4, ALPHA] = CalObj2(obj, PopDec)
+    % ... [Original code parameters and initializations remain unchanged] ...
+
+    % Core parameters (unchanged)
+    % ... 
+
+    for i = 1:N
+        % ... [Existing route parsing and cost calculation code] ...
+
+        % Compute additional variables for fuzzy propositions
+        totalDemands = zeros(1, numValidRoutes);
+        distTotals = zeros(1, numValidRoutes);
+        driver_times = zeros(1, numValidRoutes);
+        for r = 1:numValidRoutes
+            % ... existing code ...
+            totalDemands(r) = totalDemand;
+            distTotals(r) = distTotal;
+            driver_times(r) = timeTotal;
+        end
+
+        % Compute D_loadDiff and D_routeLenDiff
+        max_load = max(totalDemands);
+        min_load = min(totalDemands);
+        D_loadDiff = max_load - min_load;
+        D_loadDiff_normalized = D_loadDiff / obj.capacity;  % Normalize by Q
+
+        max_route_length = max(distTotals);
+        min_route_length = min(distTotals);
+        D_routeLenDiff = max_route_length - min_route_length;
+        if max_route_length > 0
+            D_routeLenDiff_normalized = D_routeLenDiff / max_route_length;
+        else
+            D_routeLenDiff_normalized = 0;
+        end
+
+        % Compute O_driver (normalized)
+        O_driver = max(driver_times) - min(driver_times);
+        O_driver_normalized = O_driver / (60 * 10);  % Normalize by 10 hours (600 minutes)
+
+        % Compute N_driver (normalized)
+        N_driver_normalized = numValidRoutes / obj.car;  % Max vehicles is obj.car
+
+        % Compute S_custAvg (normalized)
+        numCustomers = length(obj.demand) - 1;  % Exclude depot
+        S_custAvg_normalized = totalSatisfaction / numCustomers;
+
+        % Compute U_capacity (normalized)
+        total_utilized = sum(totalDemands);
+        total_capacity = numValidRoutes * obj.capacity;
+        U_capacity_normalized = total_utilized / total_capacity;
+
+        % Compute F (Fairness)
+        F_normalized = 1 - max(D_loadDiff_normalized, D_routeLenDiff_normalized);
+
+        % Membership functions (local helper functions)
+        mu_DloadLow = MembershipLow(D_loadDiff_normalized);
+        mu_DrouteLow = MembershipLow(D_routeLenDiff_normalized);
+        antecedent_p1 = max(mu_DloadLow, mu_DrouteLow);
+        mu_FHigh = MembershipHigh(F_normalized);
+        truth_p1 = max(1 - antecedent_p1, mu_FHigh);
+
+        mu_OdriverLow = MembershipLow(O_driver_normalized);
+        mu_NdriverMediumOrLow = max(MembershipLow(N_driver_normalized), ...
+            MembershipMedium(N_driver_normalized));
+        antecedent_p2 = min(mu_OdriverLow, mu_NdriverMediumOrLow);
+        truth_p2 = antecedent_p2;
+
+        mu_ScustHigh = MembershipHigh(S_custAvg_normalized);
+        mu_QserviceHigh = MembershipHigh(S_custAvg_normalized);  % Assume Q_service = S_custAvg
+        truth_p3 = max(1 - mu_ScustHigh, mu_QserviceHigh);
+
+        mu_UcapacityMedium = MembershipMedium(U_capacity_normalized);
+        truth_p4 = mu_UcapacityMedium;
+
+        % Aggregate using Zadeh's min (t-norm)
+        aggregated_truth = min([truth_p1, truth_p2, truth_p3, truth_p4]);
+        ALPHA{i} = aggregated_truth;
+
+        % Apply fuzzy constraint penalty
+        if aggregated_truth < 0.6
+            fuzzy_violation = 0.6 - aggregated_truth;
+            PopCon(i) = PopCon(i) + 1e5 * fuzzy_violation;
+        end
+    end
+end
+
+% Local helper functions
+function mu = MembershipLow(x)
+    if x <= 0.25
+        mu = 1 - (x / 0.25);
+    elseif x <= 0.5
+        mu = (0.5 - x) / 0.25;
+    else
+        mu = 0;
+    end
+end
+
+function mu = MembershipHigh(x)
+    if x >= 0.75
+        mu = (x - 0.75) / 0.25;
+    elseif x >= 0.5
+        mu = 1 - ((x - 0.5) / 0.25);
+    else
+        mu = 0;
+    end
+end
+
+function mu = MembershipMedium(x)
+    if x < 0.3
+        mu = x / 0.3;
+    elseif x <= 0.7
+        mu = 1;
+    else
+        mu = 1 - ((x - 0.7) / 0.3);
+    end
+end
+```
+
+---
+
+### Key Notes:
+1. **Normalization**: All variables are normalized to \([0, 1]\) using problem-specific parameters (e.g., \( Q \), \( \text{maxVehicles} \)).
+2. **Membership Functions**: Defined as local functions within `CalObj2` for encapsulation.
+3. **Aggregation**: Uses Zadeh's min operator for proposition truth aggregation.
+4. **Penalty**: Applied if the aggregated truth falls below the threshold \( \alpha = 0.6 \).
