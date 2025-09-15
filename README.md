@@ -13,3 +13,5 @@ The best generation results of 4 LLMs are as follows,
 
 
 `Prompt template` in prompt.txt
+
+`Other logs about LLM ` in Logs/LLMname.txt
