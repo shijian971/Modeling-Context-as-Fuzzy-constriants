@@ -5,7 +5,7 @@ The best generation results of 4 LLMs are as follows,
 
 `Doubao`: https://www.doubao.com/thread/w387cec388b67760f
 
-`Deepseek-R1`: DeepseekR1.pdf
+`Deepseek-R1`: DeepseekR1-DS2.pdf
 
 `Claude sonnet 4`: https://claude.ai/share/4ee23d3d-1183-42a6-afbe-b44e6598035a
 
