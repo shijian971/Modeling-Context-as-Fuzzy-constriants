@@ -1,0 +1,183 @@
+### USER
+
+
+### ASSISTANT
+### Final Answer
+
+#### 1. Logical Proposition Set $F_s$
+$$
+\mathcal{F}_s := \left\{
+\begin{array}{l}
+p_1: \text{implies}\left( \text{or}\left( D_{\text{loadDiff}} \text{ is Low}, D_{\text{routeLenDiff}} \text{ is Low} \right), F \text{ is High} \right), \\
+\quad \text{where } D_{\text{loadDiff}} = \frac{\text{Driver Load Difference}}{Q}, D_{\text{routeLenDiff}} = \frac{\text{Route Length Difference}}{\text{Max Route Length}}, F = \text{Fairness} \\
+p_2: \text{and}\left( O_{\text{driver}} \text{ is Low}, N_{\text{driver}} \text{ is Medium or Low} \right), \\
+\quad \text{where } O_{\text{driver}} = \frac{\text{Max Driver Overtime}}{480}, N_{\text{driver}} = \frac{\text{Number of Routes}}{\text{Max Vehicles}} \\
+p_3: \text{implies}\left( S_{\text{custAvg}} \text{ is High}, Q_{\text{service}} \text{ is High} \right), \\
+\quad \text{where } S_{\text{custAvg}} = \frac{\text{Average Customer Satisfaction}}{100}, Q_{\text{service}} = \text{Service Quality} \\
+p_4: U_{\text{capacity}} \text{ is Medium in } [0.3, 0.7], \\
+\quad \text{where } U_{\text{capacity}} = \text{Average Route Utilization}
+\end{array}
+\right\}
+$$
+
+#### 2. Universe of Discourse for Variables
+- **$D_{\text{loadDiff}}$**: Normalized to [0,1] using $\frac{\text{Load Difference}}{Q}$
+- **$D_{\text{routeLenDiff}}$**: Normalized to [0,1] using $\frac{\text{Length Difference}}{\text{Max Route Length}}$
+- **$O_{\text{driver}}$**: Normalized to [0,1] using $\frac{\text{Max Overtime (min)}}{480}$
+- **$N_{\text{driver}}$**: Normalized to [0,1] using $\frac{\text{Number of Routes}}{\text{Max Vehicles}}$
+- **$S_{\text{custAvg}}$**: Normalized to [0,1] using $\frac{\text{Average Satisfaction}}{100}$
+- **$U_{\text{capacity}}$**: Normalized to [0,1] using average route utilization
+
+#### 3. Membership Function Definitions
+**Triangular Membership Functions**:
+- **Low**: $ \triangle(0, 0, 0.3) $
+- **Medium**: $ \triangle(0.2, 0.5, 0.8) $
+- **High**: $ \triangle(0.7, 1, 1) $
+- **Medium for $U_{\text{capacity}}$**: $ \triangle(0.3, 0.5, 0.7) $
+
+#### 4. Modified `CalObj2` Function (MATLAB)
+```matlab
+function [PopObj, PopCon, routesList, C1, C2, C3, C4, ALPHA] = CalObj2(obj, PopDec)
+    % Core parameters
+    depotIdxs = obj.depotIdxs; maxVehicles = obj.car; Q = obj.capacity;
+    FC = 67.62; DW = 9.91/60; Cf = 1.58; fuelEfficiency = 0.052; Ce = 0.02;
+    gamma = 0.75; a = 0.0005; capPenalty = 1e4; timePenalty = 1e4; alpha = 0.6;
+    allowed_time = 480; % Max allowed driver time in minutes
+
+    N = size(PopDec, 1); PopObj = zeros(N, 2); PopCon = zeros(N, 1);
+    routesList = cell(N, 1); C1 = cell(N,1); C2 = cell(N,1); C3 = cell(N,1);
+    C4 = cell(N,1); ALPHA = cell(N,1);
+
+    for i = 1:N
+        % Parse chromosome and split routes (existing code)
+        chrom = PopDec(i, PopDec(i, :) ~= -1);
+        if isempty(chrom), chrom = depotIdxs(1); end
+        if ~ismember(chrom(1), depotIdxs)
+            firstDepot = find(ismember(chrom, depotIdxs), 1);
+            chrom = [chrom(firstDepot), chrom(1:firstDepot-1), chrom(firstDepot+1:end)];
+        end
+        depotPos = find(ismember(chrom, depotIdxs)); depotPos = [depotPos, length(chrom)+1];
+        validRoutes = {}; for r = 1:length(depotPos)-1
+            routeCustomers = chrom(depotPos(r)+1:depotPos(r+1)-1);
+            routeCustomers = routeCustomers(~ismember(routeCustomers, depotIdxs));
+            if ~isempty(routeCustomers), validRoutes{end+1} = routeCustomers; end
+        end
+        routesList{i} = validRoutes; numValidRoutes = length(validRoutes);
+
+        % Initialize cost and constraint variables
+        totalEconomic = 0; totalEnvironmental = 0; totalSocial = 0;
+        totalSatisfaction = 0; capViolation = 0; timeViolation = 0;
+        served = zeros(1, length(obj.demand)); current_alpha = 0;
+
+        % Per-route data storage
+        routeLoads = zeros(1, numValidRoutes);
+        routeLengths = zeros(1, numValidRoutes);
+        routeTimes = zeros(1, numValidRoutes);
+
+        for r = 1:numValidRoutes
+            route = validRoutes{r}; routeWithDepot = [0, route, 0];
+            % Calculate route demand, distance, time, and satisfaction (existing code)
+            demandIdxs = route + 1; totalDemand = sum(obj.demand(demandIdxs));
+            if totalDemand > Q, capViolation = capViolation + (totalDemand - Q); end
+            distTotal = 0; fuelTotal = 0; timeTotal = 0; arrivalTime = 0; currLoad = totalDemand;
+            for k = 1:length(routeWithDepot)-1
+                from = routeWithDepot(k); to = routeWithDepot(k+1);
+                dist = obj.C(from+1, to+1); v = 60; travelTimeMin = (dist / v) * 60;
+                timeTotal = timeTotal + travelTimeMin; arrivalTime = arrivalTime + travelTimeMin;
+                fuel = fuelEfficiency * dist; fuelTotal = fuelTotal + fuel;
+                distTotal = distTotal + dist; emissionCost = Ce * fuel * gamma;
+                totalEnvironmental = totalEnvironmental + emissionCost;
+                if to > 0
+                    accidentCost = a * dist * currLoad;
+                    totalSocial = totalSocial + accidentCost;
+                end
+                if to > 0 && ~served(to)
+                    served(to) = 1; custIdx = to + 1;
+                    ready = obj.readyTime(custIdx); due = obj.dueTime(custIdx);
+                    if arrivalTime < ready, arrivalTime = ready;
+                    elseif arrivalTime > due, timeViolation = timeViolation + (arrivalTime - due); end
+                    prefTime = (ready + due)/2; timeDiff = abs(arrivalTime - prefTime);
+                    windowWidth = due - ready; satisfaction = 0;
+                    if windowWidth > 0
+                        satisfaction = 100 * max(0, 1 - 2*timeDiff/windowWidth);
+                    end
+                    totalSatisfaction = totalSatisfaction + satisfaction;
+                    currLoad = currLoad - obj.demand(custIdx);
+                    arrivalTime = arrivalTime + obj.serviceTime(custIdx);
+                end
+            end
+            % Store per-route data
+            routeLoads(r) = totalDemand;
+            routeLengths(r) = distTotal;
+            routeTimes(r) = timeTotal;
+
+            % Economic cost calculation
+            vehicleCost = FC; driverCost = DW * timeTotal; fuelCost = Cf * fuelTotal;
+            totalEconomic = totalEconomic + vehicleCost + driverCost + fuelCost;
+        end
+
+        % Fuzzy proposition evaluation
+        if ~isempty(validRoutes)
+            % p1: Load and route length differences
+            D_loadDiff = (max(routeLoads) - min(routeLoads)) / Q;
+            D_routeLenDiff = (max(routeLengths) - min(routeLengths)) / (max(routeLengths) + eps);
+            mu_load_low = triangle(D_loadDiff, 0, 0, 0.3);
+            mu_route_low = triangle(D_routeLenDiff, 0, 0, 0.3);
+            truth_p1 = max(mu_load_low, mu_route_low);
+
+            % p2: Driver overtime and number of routes
+            overtime_per_route = max(routeTimes - allowed_time, 0);
+            O_driver_normalized = max(overtime_per_route) / allowed_time;
+            mu_O_low = triangle(O_driver_normalized, 0, 0, 0.3);
+            N_driver_norm = numValidRoutes / maxVehicles;
+            mu_N_low = triangle(N_driver_norm, 0, 0, 0.3);
+            mu_N_med = triangle(N_driver_norm, 0.2, 0.5, 0.8);
+            mu_N_low_or_med = max(mu_N_low, mu_N_med);
+            truth_p2 = min(mu_O_low, mu_N_low_or_med);
+
+            % p3: Average customer satisfaction
+            num_cust = length(obj.demand);
+            S_custAvg_norm = (totalSatisfaction / num_cust) / 100;
+            mu_S_high = triangle(S_custAvg_norm, 0.7, 1, 1);
+            truth_p3 = mu_S_high;
+
+            % p4: Capacity utilization
+            utilizations = routeLoads / Q; U_capacity_norm = mean(utilizations);
+            mu_U_med = triangle(U_capacity_norm, 0.3, 0.5, 0.7);
+            truth_p4 = mu_U_med;
+
+            % Aggregate truth values
+            overall_truth = min([truth_p1, truth_p2, truth_p3, truth_p4]);
+            if overall_truth < alpha
+                PopCon(i) = PopCon(i) + (alpha - overall_truth) * 1e5;
+            end
+            current_alpha = overall_truth;
+        end
+
+        % Assign outputs
+        PopCon(i) = PopCon(i) + capPenalty * capViolation + timePenalty * timeViolation;
+        PopObj(i, :) = [totalEconomic + totalEnvironmental + totalSocial, -totalSatisfaction];
+        C1{i} = totalEconomic; C2{i} = totalEnvironmental;
+        C3{i} = totalSocial; C4{i} = totalSatisfaction; ALPHA{i} = current_alpha;
+    end
+end
+
+% Triangular membership function
+function mu = triangle(x, a, b, c)
+    if x <= a
+        mu = 0;
+    elseif x <= b && b > a
+        mu = (x - a)/(b - a);
+    elseif x <= c && c > b
+        mu = (c - x)/(c - b);
+    else
+        mu = 0;
+    end
+end
+```
+
+#### 5. Notes on Implementation
+- **Helper Function**: The `triangle` function is used inline to compute triangular membership values.
+- **Normalization**: All variables are normalized to [0,1] based on problem-specific ranges.
+- **Penalty Application**: If the aggregated truth value of propositions falls below $\alpha = 0.6$, a penalty of $10^5$ is applied.
+- **Logical Operators**: Zadeh's max/min operators are used for OR/AND, and material implication is applied for conditional propositions.

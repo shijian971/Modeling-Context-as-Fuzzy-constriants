@@ -1,0 +1,299 @@
+### USER
+
+
+### ASSISTANT
+### Final Answer
+
+---
+
+#### **1. Logical Proposition Set $F_s$**
+
+$$
+\mathcal{F}_s := \left\{
+\begin{array}{l}
+p_1: \text{implies}\left( \text{or}\left( D_{\text{loadDiff}} \text{ is Low}, D_{\text{routeLenDiff}} \text{ is Low} \right), F \text{ is High} \right), \\
+\quad \text{where } D_{\text{loadDiff}} = (\text{Driver Load Difference}), D_{\text{routeLenDiff}} = (\text{Route Length Difference}), F = (\text{Fairness}) \\
+p_2: \text{and}\left( O_{\text{driver}} \text{ is Low}, N_{\text{driver}} \text{ is Medium or Low} \right), \\
+\quad \text{where } O_{\text{driver}} = (\text{Driver Overtime Hours}), N_{\text{driver}} = (\text{Driver Count}) \\
+p_3: \text{implies}\left( S_{\text{custAvg}} \text{ is High}, Q_{\text{service}} \text{ is High} \right), \\
+\quad \text{where } S_{\text{custAvg}} = (\text{Customer Avg Satisfaction}), Q_{\text{service}} = (\text{Service Quality}) \\
+p_4: U_{\text{capacity}} \text{ is Medium(0.5-0.2,0.5+0.2)}, \\
+\quad \text{where } U_{\text{capacity}} = (\text{Capacity Utilization}) 
+\end{array}
+\right\}
+$$
+
+---
+
+#### **2. Universe of Discourse for Variables**
+
+| **Variable**          | **Universe of Discourse** | **Normalization Method** |
+|-----------------------|---------------------------|--------------------------|
+| $D_{\text{loadDiff}}$ | [0, 1]                   | $\frac{\text{max(load)} - \text{min(load)}}{Q}$ |
+| $D_{\text{routeLenDiff}}$ | [0, 1]                | $\frac{\text{max(routeDists)} - \text{min(routeDists)}}{\text{max(routeDists)} + \epsilon}$ |
+| $O_{\text{driver}}$   | [0, 1]                   | $\frac{\text{mean(routeTimes)}}{600}$ (600 minutes = 10 hours) |
+| $N_{\text{driver}}$   | [0, 1]                   | $\frac{\text{numValidRoutes} - 1}{\text{maxVehicles} - 1}$ |
+| $S_{\text{custAvg}}$  | [0, 1]                   | $\frac{\text{totalSatisfaction}}{100 \times \text{numCustomers}}$ |
+| $U_{\text{capacity}}$ | [0, 1]                   | $\frac{\text{totalDemand}}{Q \times \text{numValidRoutes}}$ |
+
+---
+
+#### **3. Membership Functions**
+
+**Triangular Membership Functions:**
+```matlab
+function mu = mu_low(x)
+    mu = triangle(x, 0, 0.25, 0.5);
+end
+
+function mu = mu_medium(x)
+    mu = triangle(x, 0.3, 0.5, 0.7);
+end
+
+function mu = mu_high(x)
+    mu = triangle(x, 0.5, 0.75, 1.0);
+end
+
+function mu = triangle(x, a, b, c)
+    if x <= a || x >= c
+        mu = 0;
+    elseif x < b
+        mu = (x - a) / (b - a);
+    else
+        mu = (c - x) / (c - b);
+    end
+end
+```
+
+**Definitions:**
+- **Low**: Triangular MF with points [0, 0.25, 0.5]
+- **Medium**: Triangular MF with points [0.3, 0.5, 0.7]
+- **High**: Triangular MF with points [0.5, 0.75, 1.0]
+
+---
+
+#### **4. Modified `CalObj2` Function with Fuzzy Constraints**
+
+```matlab
+function [PopObj, PopCon, routesList, C1, C2, C3, C4, ALPHA] = CalObj2(obj, PopDec)
+    % CalObj2 - Calculate bi-criteria objectives, constraint violations, and route lists
+    % Initialize output parameters
+    N = size(PopDec, 1);
+    PopObj = zeros(N, 2);
+    PopCon = zeros(N, 1);
+    routesList = cell(N, 1);
+    C1 = cell(N, 1);
+    C2 = cell(N, 1);
+    C3 = cell(N, 1);
+    C4 = cell(N, 1);
+    ALPHA = cell(N,1);
+
+    % Core parameters
+    depotIdxs = obj.depotIdxs;
+    maxVehicles = obj.car;
+    Q = obj.capacity;
+    FC = 67.62;
+    DW = 9.91 / 60;
+    Cf = 1.58;
+    fuelEfficiency = 0.052;
+    Ce = 0.02;
+    gamma = 0.75;
+    a = 0.0005;
+
+    % Penalty factors
+    capPenalty = 10000;
+    timePenalty = 10000;
+    fuzzyPenalty = 1e5;
+    alpha_threshold = 0.6;
+
+    for i = 1:N
+        chrom = PopDec(i, PopDec(i, :) ~= -1);
+        if isempty(chrom), chrom = depotIdxs(1); end
+        if ~ismember(chrom(1), depotIdxs)
+            firstDepot = find(ismember(chrom, depotIdxs), 1);
+            chrom = [chrom(firstDepot), chrom(1:firstDepot-1), chrom(firstDepot+1:end)];
+        end
+
+        % Split routes
+        depotPos = find(ismember(chrom, depotIdxs));
+        depotPos = [depotPos, length(chrom)+1];
+        validRoutes = {};
+        for r = 1:length(depotPos)-1
+            startIdx = depotPos(r);
+            endIdx = depotPos(r+1)-1;
+            routeCustomers = chrom(startIdx+1:endIdx);
+            routeCustomers = routeCustomers(~ismember(routeCustomers, depotIdxs));
+            if ~isempty(routeCustomers)
+                validRoutes{end+1} = routeCustomers;
+            end
+        end
+        routesList{i} = validRoutes;
+        numValidRoutes = length(validRoutes);
+
+        % Initialize cost and constraint variables
+        totalEconomic = 0;
+        totalEnvironmental = 0;
+        totalSocial = 0;
+        totalSatisfaction = 0;
+        capViolation = 0;
+        timeViolation = 0;
+        served = zeros(1, length(obj.demand));
+
+        % Route metrics for fuzzy constraints
+        routeLoads = [];
+        routeDists = [];
+        routeTimes = [];
+
+        % Calculate costs and constraints
+        for r = 1:numValidRoutes
+            route = validRoutes{r};
+            routeWithDepot = [0, route, 0];
+            routeLen = length(routeWithDepot);
+
+            % Load
+            demandIdxs = route + 1;
+            totalDemand = sum(obj.demand(demandIdxs));
+            currLoad = totalDemand;
+            if totalDemand > Q
+                capViolation = capViolation + (totalDemand - Q);
+            end
+
+            % Distance and time
+            distTotal = 0;
+            fuelTotal = 0;
+            timeTotal = 0;
+            arrivalTime = 0;
+
+            for k = 1:routeLen-1
+                from = routeWithDepot(k);
+                to = routeWithDepot(k+1);
+                dist = obj.C(from+1, to+1);
+                v = 60;
+                travelTimeMin = (dist / v) * 60;
+                timeTotal = timeTotal + travelTimeMin;
+                arrivalTime = arrivalTime + travelTimeMin;
+
+                fuel = fuelEfficiency * dist;
+                fuelTotal = fuelTotal + fuel;
+                distTotal = distTotal + dist;
+
+                emissionCost = Ce * fuel * gamma;
+                totalEnvironmental = totalEnvironmental + emissionCost;
+
+                if to > 0
+                    accidentCost = a * dist * currLoad;
+                    totalSocial = totalSocial + accidentCost;
+                end
+
+                if to > 0 && ~served(to)
+                    served(to) = 1;
+                    custIdx = to + 1;
+                    ready = obj.readyTime(custIdx);
+                    due = obj.dueTime(custIdx);
+
+                    if arrivalTime < ready
+                        arrivalTime = ready;
+                    elseif arrivalTime > due
+                        timeViolation = timeViolation + (arrivalTime - due);
+                    end
+
+                    prefTime = (ready + due) / 2;
+                    timeDiff = abs(arrivalTime - prefTime);
+                    windowWidth = due - ready;
+                    satisfaction = 100 * max(0, 1 - 2*timeDiff/windowWidth);
+                    totalSatisfaction = totalSatisfaction + satisfaction;
+
+                    currLoad = currLoad - obj.demand(custIdx);
+                    arrivalTime = arrivalTime + obj.serviceTime(custIdx);
+                end
+            end
+
+            % Store route metrics
+            routeLoads(end+1) = totalDemand;
+            routeDists(end+1) = distTotal;
+            routeTimes(end+1) = arrivalTime;
+
+            % Economic cost
+            vehicleCost = FC;
+            driverCost = DW * timeTotal;
+            fuelCost = Cf * fuelTotal;
+            economicCost = vehicleCost + driverCost + fuelCost;
+            totalEconomic = totalEconomic + economicCost;
+        end
+
+        % Fuzzy constraint calculations
+        if numValidRoutes > 0
+            % p1: Load and route differences
+            D_loadDiff = 0;
+            if numValidRoutes > 1
+                D_loadDiff = (max(routeLoads) - min(routeLoads)) / Q;
+            end
+            D_routeLenDiff = 0;
+            if numValidRoutes > 1
+                maxDist = max(routeDists);
+                minDist = min(routeDists);
+                D_routeLenDiff = (maxDist - minDist) / (maxDist + 1e-9);
+            end
+
+            load_low = obj.mu_low(D_loadDiff);
+            route_low = obj.mu_low(D_routeLenDiff);
+            antecedent = max(load_low, route_low);
+
+            F = ( (1 - D_loadDiff) + (1 - D_routeLenDiff) ) / 2;
+            F_high = obj.mu_high(F);
+            truth_p1 = min(1.0, 1.0 - antecedent + F_high);
+
+            % p2: Overtime and driver count
+            avgTime = mean(routeTimes);
+            O_norm = avgTime / 600;
+            O_low = obj.mu_low(O_norm);
+
+            N_norm = (numValidRoutes - 1) / (maxVehicles - 1);
+            N_low = obj.mu_low(N_norm);
+            N_medium = obj.mu_medium(N_norm);
+            N_or = max(N_medium, N_low);
+            truth_p2 = min(O_low, N_or);
+
+            % p3: Customer satisfaction and service quality
+            numCustomers = length(obj.demand);
+            S_avg = totalSatisfaction / numCustomers;
+            S_norm = S_avg / 100;
+            S_high = obj.mu_high(S_norm);
+            truth_p3 = min(1.0, 1.0 - S_high + S_high);  % Q_service = S_norm
+
+            % p4: Capacity utilization
+            totalDemand_all = sum(obj.demand(2:end));  % Exclude depot
+            num_vehicles = numValidRoutes;
+            U_capacity = totalDemand_all / (Q * num_vehicles);
+            truth_p4 = obj.mu_medium(U_capacity);
+
+            % Aggregate truth
+            agg_truth = min([truth_p1, truth_p2, truth_p3, truth_p4]);
+            ALPHA{i} = agg_truth;
+
+            if agg_truth < alpha_threshold
+                fuzzy_penalty = fuzzyPenalty * (alpha_threshold - agg_truth);
+                PopCon(i) = PopCon(i) + fuzzy_penalty;
+            end
+        else
+            ALPHA{i} = 0;
+        end
+
+        % Finalize outputs
+        PopCon(i) = PopCon(i) + capPenalty * capViolation + timePenalty * timeViolation;
+        PopObj(i, :) = [totalEconomic + totalEnvironmental + totalSocial, -totalSatisfaction];
+        C1{i} = totalEconomic;
+        C2{i} = totalEnvironmental;
+        C3{i} = totalSocial;
+        C4{i} = totalSatisfaction;
+    end
+end
+```
+
+---
+
+#### **5. Key Modifications**
+1. **Helper Functions**: Implemented `mu_low`, `mu_medium`, `mu_high`, and `triangle` as methods of `obj`.
+2. **Route Metrics**: Collected `routeLoads`, `routeDists`, and `routeTimes` during route processing.
+3. **Fuzzy Constraints**: Added logic to compute $D_{\text{loadDiff}}$, $D_{\text{routeLenDiff}}$, $O_{\text{driver}}$, $N_{\text{driver}}$, $S_{\text{custAvg}}$, and $U_{\text{capacity}}$.
+4. **Penalty Calculation**: Applied fuzzy penalties using t-norm aggregation and a global threshold $\alpha = 0.6$.
